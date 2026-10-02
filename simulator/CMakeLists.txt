@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.16)
+project(apex_simulator LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+add_executable(apex-simulator src/main.cpp)
+target_compile_options(apex-simulator PRIVATE -Wall -Wextra -Wpedantic)

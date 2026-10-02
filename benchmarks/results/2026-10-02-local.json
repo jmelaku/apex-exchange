@@ -1,0 +1,14 @@
+{
+  "measured_at": "2026-10-02T00:24:35.366087+00:00",
+  "url": "http://localhost:8000",
+  "orders_attempted": 1000,
+  "concurrency": 20,
+  "symbol_count": 4,
+  "elapsed_seconds": 2.423713,
+  "orders_per_second": 412.59,
+  "trades_observed": 500,
+  "trades_per_second": 206.3,
+  "latency_ms": {"mean": 47.934, "p50": 43.198, "p95": 84.767, "p99": 239.377},
+  "http_statuses": {"201": 1000},
+  "environment_note": "Docker Desktop on local Apple silicon development host; full REST/database/risk/WebSocket stack running."
+}

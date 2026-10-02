@@ -1,0 +1,117 @@
+name: apex-exchange
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-apex}
+      POSTGRES_USER: ${POSTGRES_USER:-apex}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-apex_local_only}
+    ports: ["${POSTGRES_PORT:-55432}:5432"]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  matching-engine:
+    build: ./engine
+    environment:
+      ENGINE_PORT: 9001
+      ENGINE_WORKERS: ${ENGINE_WORKERS:-4}
+    ports: ["9001:9001"]
+    healthcheck:
+      test: ["CMD-SHELL", "printf 'PING\n' | nc -w 1 127.0.0.1 9001 | grep -q '\"ok\":true'"]
+      interval: 3s
+      timeout: 2s
+      retries: 20
+    restart: unless-stopped
+
+  risk-service:
+    build: ./risk
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://apex:apex_local_only@postgres:5432/apex}
+      RISK_WINDOW_SECONDS: ${RISK_WINDOW_SECONDS:-60}
+      RISK_ORDER_RATE_THRESHOLD: ${RISK_ORDER_RATE_THRESHOLD:-30}
+      RISK_CANCEL_RATIO_THRESHOLD: ${RISK_CANCEL_RATIO_THRESHOLD:-0.80}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-}
+      LLM_MODEL: ${LLM_MODEL:-}
+    ports: ["8001:8001"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    build: ./api
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://apex:apex_local_only@postgres:5432/apex}
+      ENGINE_HOST: matching-engine
+      ENGINE_PORT: 9001
+      RISK_URL: http://risk-service:8001
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports: ["8000:8000"]
+    depends_on:
+      postgres: {condition: service_healthy}
+      matching-engine: {condition: service_healthy}
+      risk-service: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+        VITE_WS_URL: ${VITE_WS_URL:-ws://localhost:8000/ws}
+    ports: ["3000:3000"]
+    depends_on:
+      api: {condition: service_healthy}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  simulator:
+    build: ./simulator
+    profiles: ["simulation"]
+    environment:
+      API_HOST: api
+      API_PORT: 8000
+      SIM_CHILDREN: ${SIM_CHILDREN:-2}
+      SIM_EVENTS_PER_CHILD: ${SIM_EVENTS_PER_CHILD:-0}
+      SIM_EVENTS_PER_SECOND: ${SIM_EVENTS_PER_SECOND:-4}
+      SIM_VOLATILITY: ${SIM_VOLATILITY:-1.0}
+      SIM_SYMBOLS: ${SIM_SYMBOLS:-AAPL,MSFT,NVDA,BTCUSD}
+      SIM_SEED: ${SIM_SEED:-424242}
+      SIM_DEPTH_LEVELS: ${SIM_DEPTH_LEVELS:-3}
+      SIM_MAX_OPEN_PER_SYMBOL: ${SIM_MAX_OPEN_PER_SYMBOL:-12}
+      SIM_MAKER_ACCOUNT: ${SIM_MAKER_ACCOUNT:-3}
+      SIM_TAKER_ACCOUNT: ${SIM_TAKER_ACCOUNT:-4}
+    depends_on:
+      api: {condition: service_healthy}
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml"]
+    volumes: ["./infrastructure/prometheus.yml:/etc/prometheus/prometheus.yml:ro"]
+    ports: ["9090:9090"]
+
+volumes:
+  postgres_data:
